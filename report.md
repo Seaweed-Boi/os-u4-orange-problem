@@ -272,3 +272,24 @@ Complexity estimate for 100,000 commits and 50 branches:
   - approximately commits + unique trees + unique blobs.
 3. In a typical code repository, this is often on the order of a few hundred thousand to a few million objects, and each object is processed at most once.
 
+**Q6.2:** Why is it dangerous to run garbage collection concurrently with a commit operation? Describe a race condition where GC could delete an object that a concurrent commit is about to reference. How does Git's real GC avoid this?
+
+Running GC concurrently with commit is dangerous because commit creation is not a single instant: objects are written first, and refs are updated later. During that gap, newly written objects may be temporarily unreachable from branch heads, so a concurrent GC can incorrectly classify them as garbage.
+
+Example race condition:
+
+1. Commit process writes new blob/tree/commit objects into `.pes/objects`.
+2. Before it updates `.pes/refs/heads/main`, those objects are not yet reachable from any ref.
+3. Concurrent GC starts mark phase from refs and does not see these new objects.
+4. GC sweep deletes those objects as unreachable.
+5. Commit process then updates the branch ref to the new commit hash, which now points to missing objects (repository corruption).
+
+How Git avoids this in practice:
+
+1. Git uses lock files and coordinated critical sections so ref updates and maintenance tasks are serialized safely.
+2. Git does not immediately delete recently unreachable objects; it uses grace periods and prune thresholds (objects must be old enough before removal).
+3. Reachability traversal includes auxiliary roots (for example reflogs and in-progress references), reducing false unreachability.
+4. Modern maintenance is designed to be race-resistant, preferring conservative retention over aggressive deletion.
+
+A safe PES design would follow the same principles: lock refs during critical updates, avoid immediate deletion of fresh unreachable objects, and only prune objects older than a conservative cutoff.
+
