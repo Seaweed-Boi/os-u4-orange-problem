@@ -26,6 +26,9 @@
 #include <dirent.h>
 #include <time.h>
 
+// Forward declarations (implemented in object.c)
+int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out);
+
 // ─── PROVIDED ────────────────────────────────────────────────────────────────
 
 // Find an index entry by path (linear scan).
@@ -272,8 +275,58 @@ int index_save(const Index *index) {
 //
 // Returns 0 on success, -1 on error.
 int index_add(Index *index, const char *path) {
-    // TODO: Implement file staging
-    // (See Lab Appendix for logical steps)
-    (void)index; (void)path;
-    return -1;
+    if (index == NULL || path == NULL) return -1;
+
+    struct stat st;
+    if (lstat(path, &st) != 0) return -1;
+    if (!S_ISREG(st.st_mode)) return -1;
+    if (st.st_size < 0 || (uint64_t)st.st_size > UINT32_MAX) return -1;
+
+    size_t file_len = (size_t)st.st_size;
+    void *buffer = malloc(file_len > 0 ? file_len : 1);
+    if (buffer == NULL) return -1;
+
+    FILE *f = fopen(path, "rb");
+    if (!f) {
+        free(buffer);
+        return -1;
+    }
+
+    if (file_len > 0) {
+        size_t read_n = fread(buffer, 1, file_len, f);
+        if (read_n != file_len) {
+            fclose(f);
+            free(buffer);
+            return -1;
+        }
+    }
+
+    if (fclose(f) != 0) {
+        free(buffer);
+        return -1;
+    }
+
+    ObjectID blob_id;
+    if (object_write(OBJ_BLOB, buffer, file_len, &blob_id) != 0) {
+        free(buffer);
+        return -1;
+    }
+    free(buffer);
+
+    IndexEntry *entry = index_find(index, path);
+    if (entry == NULL) {
+        if (index->count >= MAX_INDEX_ENTRIES) return -1;
+        entry = &index->entries[index->count++];
+    }
+
+    if (snprintf(entry->path, sizeof(entry->path), "%s", path) >= (int)sizeof(entry->path)) {
+        return -1;
+    }
+
+    entry->mode = (st.st_mode & S_IXUSR) ? 0100755 : 0100644;
+    entry->hash = blob_id;
+    entry->mtime_sec = (uint64_t)st.st_mtime;
+    entry->size = (uint32_t)st.st_size;
+
+    return index_save(index);
 }
