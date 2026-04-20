@@ -218,3 +218,20 @@ Also treat structural changes similarly:
 
 If no conflicts are found, checkout can proceed by materializing the target tree and resetting the index to target hashes.
 
+**Q5.3:** "Detached HEAD" means HEAD contains a commit hash directly instead of a branch reference. What happens if you make commits in this state? How could a user recover those commits?
+
+In detached HEAD state, new commits are created normally, but no branch name is advanced to point to them. HEAD moves from commit to commit directly (as a raw hash), so those commits are reachable only through the current HEAD position.
+
+What this means in practice:
+
+1. You can commit and inspect history while detached.
+2. If you later checkout a branch, HEAD stops pointing to the detached chain.
+3. Detached commits can become "orphaned" (unreferenced by any branch) and may eventually be garbage-collected.
+
+Recovery is straightforward if the commit hash is known (for example from `pes log` output while detached):
+
+1. Create a branch file under `.pes/refs/heads/<new-branch>` containing that detached commit hash.
+2. Update `.pes/HEAD` to `ref: refs/heads/<new-branch>`.
+
+This converts the detached history into normal branch history and prevents those commits from becoming unreachable.
+
