@@ -13,6 +13,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <errno.h>
 #include <fcntl.h>
 #include <unistd.h>
 #include <openssl/evp.h>
@@ -94,9 +95,141 @@ int object_exists(const ObjectID *id) {
 //
 // Returns 0 on success, -1 on error.
 int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out) {
-    // TODO: Implement
-    (void)type; (void)data; (void)len; (void)id_out;
-    return -1;
+    if (id_out == NULL) return -1;
+    if (len > 0 && data == NULL) return -1;
+
+    const char *type_str;
+    switch (type) {
+        case OBJ_BLOB:   type_str = "blob"; break;
+        case OBJ_TREE:   type_str = "tree"; break;
+        case OBJ_COMMIT: type_str = "commit"; break;
+        default: return -1;
+    }
+
+    char header[64];
+    int header_len = snprintf(header, sizeof(header), "%s %zu", type_str, len);
+    if (header_len < 0 || (size_t)header_len >= sizeof(header)) return -1;
+
+    size_t object_len = (size_t)header_len + 1; // include NUL between header and data
+    if (object_len > SIZE_MAX - len) return -1;
+    object_len += len;
+
+    unsigned char *object_buf = malloc(object_len);
+    if (object_buf == NULL) return -1;
+
+    memcpy(object_buf, header, (size_t)header_len + 1);
+    if (len > 0) memcpy(object_buf + (size_t)header_len + 1, data, len);
+
+    compute_hash(object_buf, object_len, id_out);
+    if (object_exists(id_out)) {
+        free(object_buf);
+        return 0;
+    }
+
+    char final_path[512];
+    object_path(id_out, final_path, sizeof(final_path));
+
+    char hex[HASH_HEX_SIZE + 1];
+    hash_to_hex(id_out, hex);
+
+    if (mkdir(OBJECTS_DIR, 0755) != 0 && errno != EEXIST) {
+        free(object_buf);
+        return -1;
+    }
+
+    char shard_dir[512];
+    if (snprintf(shard_dir, sizeof(shard_dir), "%s/%.2s", OBJECTS_DIR, hex) >= (int)sizeof(shard_dir)) {
+        free(object_buf);
+        return -1;
+    }
+
+    if (mkdir(shard_dir, 0755) != 0 && errno != EEXIST) {
+        free(object_buf);
+        return -1;
+    }
+
+    char tmp_path[640];
+    if (snprintf(tmp_path, sizeof(tmp_path), "%s/.tmp-%ld-XXXXXX", shard_dir, (long)getpid()) >= (int)sizeof(tmp_path)) {
+        free(object_buf);
+        return -1;
+    }
+
+    int tmp_fd = mkstemp(tmp_path);
+    if (tmp_fd < 0) {
+        free(object_buf);
+        return -1;
+    }
+
+    size_t written_total = 0;
+    while (written_total < object_len) {
+        ssize_t n = write(tmp_fd, object_buf + written_total, object_len - written_total);
+        if (n < 0) {
+            int saved = errno;
+            close(tmp_fd);
+            unlink(tmp_path);
+            free(object_buf);
+            errno = saved;
+            return -1;
+        }
+        if (n == 0) {
+            close(tmp_fd);
+            unlink(tmp_path);
+            free(object_buf);
+            return -1;
+        }
+        written_total += (size_t)n;
+    }
+
+    if (fsync(tmp_fd) != 0) {
+        int saved = errno;
+        close(tmp_fd);
+        unlink(tmp_path);
+        free(object_buf);
+        errno = saved;
+        return -1;
+    }
+
+    if (close(tmp_fd) != 0) {
+        int saved = errno;
+        unlink(tmp_path);
+        free(object_buf);
+        errno = saved;
+        return -1;
+    }
+
+    if (rename(tmp_path, final_path) != 0) {
+        int saved = errno;
+        unlink(tmp_path);
+        free(object_buf);
+        errno = saved;
+        return -1;
+    }
+
+    int dir_open_flags = O_RDONLY;
+#ifdef O_DIRECTORY
+    dir_open_flags |= O_DIRECTORY;
+#endif
+    int dir_fd = open(shard_dir, dir_open_flags);
+    if (dir_fd < 0) {
+        free(object_buf);
+        return -1;
+    }
+
+    if (fsync(dir_fd) != 0) {
+        int saved = errno;
+        close(dir_fd);
+        free(object_buf);
+        errno = saved;
+        return -1;
+    }
+
+    if (close(dir_fd) != 0) {
+        free(object_buf);
+        return -1;
+    }
+
+    free(object_buf);
+    return 0;
 }
 
 // Read an object from the store.
