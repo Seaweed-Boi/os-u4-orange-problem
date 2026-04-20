@@ -91,6 +91,56 @@ Raw tree object representation (`xxd` excerpt):
 
 ![Screenshot 2B](screenshots/2b.png)
 
+### Phase 3: The Index (Staging Area)
+
+Completed implementation in [index.c](index.c):
+
+- Implemented index_load:
+  - Loads `.pes/index` entries in text format.
+  - Handles missing index file as a valid empty state.
+  - Parses and validates hash fields using `hex_to_hash`.
+- Implemented index_save:
+  - Sorts entries by path before writing.
+  - Writes index atomically via temp file + `fsync` + `rename`.
+  - Uses heap-based sorting buffer to avoid stack overflow.
+- Implemented index_add:
+  - Reads file contents and stores blob via `object_write`.
+  - Upserts index entries using `index_find`.
+  - Updates mode, hash, mtime, and size metadata.
+  - Persists index updates through `index_save`.
+
+### Phase 3 Validation
+
+Commands run:
+
+```bash
+make pes
+./pes init
+echo "hello" > file1.txt
+echo "world" > file2.txt
+./pes add file1.txt file2.txt
+./pes status
+cat .pes/index
+```
+
+Observed result summary:
+
+- `pes add` stages both files successfully.
+- `pes status` shows `file1.txt` and `file2.txt` under Staged changes.
+- `.pes/index` contains sorted, human-readable entries for both files.
+
+### Screenshot 3A (Required)
+
+`pes init` → `pes add` → `pes status` sequence output:
+
+![Screenshot 3A](screenshots/3a.png)
+
+### Screenshot 3B (Required)
+
+Contents of `.pes/index` after staging:
+
+![Screenshot 3B](screenshots/3b.png)
+
 ## Progress Checklist
 
 | Phase | Item | Status |
@@ -101,7 +151,9 @@ Raw tree object representation (`xxd` excerpt):
 | 2 | tree.c (tree_from_index) | Completed |
 | 2 | Screenshot 2A | Added |
 | 2 | Screenshot 2B | Added |
-| 3 | index.c | Pending |
+| 3 | index.c (index_load, index_save, index_add) | Completed |
+| 3 | Screenshot 3A | Added |
+| 3 | Screenshot 3B | Added |
 | 4 | commit.c | Pending |
 | Final | Integration test evidence | Pending |
 
@@ -109,7 +161,7 @@ Raw tree object representation (`xxd` excerpt):
 
 ## Notes
 
-- This report currently includes completed work up to Phase 2 (object storage and tree objects), with screenshots 1A/1B and 2A/2B.
+- This report currently includes completed work up to Phase 3 (object storage, tree objects, and index staging), with screenshots 1A/1B, 2A/2B, and 3A/3B.
 
 - Remaining implementation phases will be appended as work progresses.
 
