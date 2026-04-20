@@ -165,7 +165,7 @@ Contents of `.pes/index` after staging:
 
 - Remaining implementation phases will be appended as work progresses.
 
-## Phase 5 Analysis (Q5.1 Only)
+## Phase 5 Analysis
 
 **Q5.1:** A branch in Git is just a file in `.git/refs/heads/` containing a commit hash. Creating a branch is creating a file. Given this, how would you implement `pes checkout <branch>` — what files need to change in `.pes/`, and what must happen to the working directory? What makes this operation complex?
 
@@ -191,4 +191,30 @@ The complexity is mostly in safe working-directory updates, not ref updates. The
 3. Preserving correct file modes and deterministic tree-to-filesystem reconstruction.
 4. Making checkout crash-safe (avoid half-switched state if interrupted).
 5. Keeping `HEAD`, branch ref, working tree, and index consistent as one logical transaction.
+
+**Q5.2:** When switching branches, the working directory must be updated to match the target branch's tree. If the user has uncommitted changes to a tracked file, and that file differs between branches, checkout must refuse. Describe how you would detect this "dirty working directory" conflict using only the index and the object store.
+
+To detect this conflict using only the index and object store, compare three states per tracked path:
+
+1. **Current branch snapshot (HEAD tree):** map each path to its blob hash from the current commit's tree.
+2. **Target branch snapshot (target tree):** map each path to its blob hash from the branch being checked out.
+3. **Working/index state now:** for each index entry, recompute the current file's blob hash from disk (or treat as missing if deleted), then compare with the index/HEAD expectation.
+
+Conflict rule for checkout:
+
+1. A path is **locally dirty** if working file hash differs from the current branch snapshot hash (or the file is deleted/modified relative to current tracked state).
+2. A path is **branch-different** if current branch snapshot hash differs from target branch snapshot hash for that same path (including add/delete cases).
+3. If both are true for any path, refuse checkout and report that path.
+
+Equivalent condition:
+
+If `work != current` and `current != target`, then checkout is unsafe for that path.
+
+Also treat structural changes similarly:
+
+1. File present in current but absent in target, while locally modified: conflict.
+2. File absent in current but present in target, and an untracked local file already exists at that path: conflict.
+3. File-vs-directory swaps between branches where local content exists at destination paths: conflict.
+
+If no conflicts are found, checkout can proceed by materializing the target tree and resetting the index to target hashes.
 
