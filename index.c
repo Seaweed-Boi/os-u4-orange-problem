@@ -201,12 +201,19 @@ static int compare_index_entries_by_path(const void *a, const void *b) {
 
 int index_save(const Index *index) {
     if (index == NULL) return -1;
+    if (index->count < 0 || index->count > MAX_INDEX_ENTRIES) return -1;
 
-    Index sorted = *index;
-    qsort(sorted.entries,
-          (size_t)sorted.count,
-          sizeof(IndexEntry),
-          compare_index_entries_by_path);
+    size_t entry_count = (size_t)index->count;
+    IndexEntry *sorted_entries = NULL;
+    if (entry_count > 0) {
+        sorted_entries = malloc(entry_count * sizeof(IndexEntry));
+        if (!sorted_entries) return -1;
+        memcpy(sorted_entries, index->entries, entry_count * sizeof(IndexEntry));
+        qsort(sorted_entries,
+              entry_count,
+              sizeof(IndexEntry),
+              compare_index_entries_by_path);
+    }
 
     char tmp_path[sizeof(INDEX_FILE) + 5];
     snprintf(tmp_path, sizeof(tmp_path), "%s.tmp", INDEX_FILE);
@@ -214,19 +221,20 @@ int index_save(const Index *index) {
     FILE *f = fopen(tmp_path, "w");
     if (!f) return -1;
 
-    for (int i = 0; i < sorted.count; i++) {
+    for (size_t i = 0; i < entry_count; i++) {
         char hex[HASH_HEX_SIZE + 1];
-        hash_to_hex(&sorted.entries[i].hash, hex);
+        hash_to_hex(&sorted_entries[i].hash, hex);
 
         if (fprintf(f, "%o %s %lu %u %s\n",
-                    sorted.entries[i].mode,
+                    sorted_entries[i].mode,
                     hex,
-                    sorted.entries[i].mtime_sec,
-                    sorted.entries[i].size,
-                    sorted.entries[i].path) < 0) {
+                    sorted_entries[i].mtime_sec,
+                    sorted_entries[i].size,
+                    sorted_entries[i].path) < 0) {
             int saved = errno;
             fclose(f);
             unlink(tmp_path);
+            free(sorted_entries);
             errno = saved;
             return -1;
         }
@@ -236,6 +244,7 @@ int index_save(const Index *index) {
         int saved = errno;
         fclose(f);
         unlink(tmp_path);
+        free(sorted_entries);
         errno = saved;
         return -1;
     }
@@ -244,6 +253,7 @@ int index_save(const Index *index) {
         int saved = errno;
         fclose(f);
         unlink(tmp_path);
+        free(sorted_entries);
         errno = saved;
         return -1;
     }
@@ -251,6 +261,7 @@ int index_save(const Index *index) {
     if (fclose(f) != 0) {
         int saved = errno;
         unlink(tmp_path);
+        free(sorted_entries);
         errno = saved;
         return -1;
     }
@@ -258,9 +269,12 @@ int index_save(const Index *index) {
     if (rename(tmp_path, INDEX_FILE) != 0) {
         int saved = errno;
         unlink(tmp_path);
+        free(sorted_entries);
         errno = saved;
         return -1;
     }
+
+    free(sorted_entries);
 
     return 0;
 }
