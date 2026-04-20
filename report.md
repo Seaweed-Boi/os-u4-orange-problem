@@ -165,3 +165,30 @@ Contents of `.pes/index` after staging:
 
 - Remaining implementation phases will be appended as work progresses.
 
+## Phase 5 Analysis (Q5.1 Only)
+
+**Q5.1:** A branch in Git is just a file in `.git/refs/heads/` containing a commit hash. Creating a branch is creating a file. Given this, how would you implement `pes checkout <branch>` — what files need to change in `.pes/`, and what must happen to the working directory? What makes this operation complex?
+
+To implement `pes checkout <branch>` in PES, the core metadata change is simple:
+
+1. Verify `.pes/refs/heads/<branch>` exists.
+2. Update `.pes/HEAD` to `ref: refs/heads/<branch>`.
+3. Read the commit hash from `.pes/refs/heads/<branch>`.
+
+After that, reconstruct the target snapshot in the working directory:
+
+1. Read the target commit object and get its root tree hash.
+2. Recursively walk tree objects and materialize files/directories into the working tree.
+3. For each blob entry, read object data and write file contents.
+4. Apply mode bits (for example executable vs non-executable).
+5. Remove tracked files/directories that exist in the current checkout but not in the target tree.
+6. Rewrite `.pes/index` to match the checked-out tree state.
+
+The complexity is mostly in safe working-directory updates, not ref updates. The difficult parts are:
+
+1. Detecting conflicts with local uncommitted changes before overwriting files.
+2. Handling deletes/renames across nested directories without leaving stale paths.
+3. Preserving correct file modes and deterministic tree-to-filesystem reconstruction.
+4. Making checkout crash-safe (avoid half-switched state if interrupted).
+5. Keeping `HEAD`, branch ref, working tree, and index consistent as one logical transaction.
+
