@@ -255,7 +255,108 @@ int object_write(ObjectType type, const void *data, size_t len, ObjectID *id_out
 // The caller is responsible for calling free(*data_out).
 // Returns 0 on success, -1 on error (file not found, corrupt, etc.).
 int object_read(const ObjectID *id, ObjectType *type_out, void **data_out, size_t *len_out) {
-    // TODO: Implement
-    (void)id; (void)type_out; (void)data_out; (void)len_out;
-    return -1;
+    if (id == NULL || type_out == NULL || data_out == NULL || len_out == NULL) return -1;
+
+    char path[512];
+    object_path(id, path, sizeof(path));
+
+    FILE *f = fopen(path, "rb");
+    if (f == NULL) return -1;
+
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        return -1;
+    }
+
+    long file_size_long = ftell(f);
+    if (file_size_long < 0) {
+        fclose(f);
+        return -1;
+    }
+
+    if (fseek(f, 0, SEEK_SET) != 0) {
+        fclose(f);
+        return -1;
+    }
+
+    size_t file_size = (size_t)file_size_long;
+    unsigned char *file_buf = malloc(file_size);
+    if (file_buf == NULL && file_size != 0) {
+        fclose(f);
+        return -1;
+    }
+
+    if (file_size > 0) {
+        size_t read_n = fread(file_buf, 1, file_size, f);
+        if (read_n != file_size) {
+            free(file_buf);
+            fclose(f);
+            return -1;
+        }
+    }
+
+    fclose(f);
+
+    if (file_size == 0) {
+        free(file_buf);
+        return -1;
+    }
+
+    unsigned char *nul = memchr(file_buf, '\0', file_size);
+    if (nul == NULL) {
+        free(file_buf);
+        return -1;
+    }
+
+    ObjectID computed;
+    compute_hash(file_buf, file_size, &computed);
+    if (memcmp(computed.hash, id->hash, HASH_SIZE) != 0) {
+        free(file_buf);
+        return -1;
+    }
+
+    char type_str[16];
+    size_t declared_len;
+    char extra;
+    int parsed = sscanf((char *)file_buf, "%15s %zu %c", type_str, &declared_len, &extra);
+    if (parsed != 2) {
+        free(file_buf);
+        return -1;
+    }
+
+    ObjectType parsed_type;
+    if (strcmp(type_str, "blob") == 0) {
+        parsed_type = OBJ_BLOB;
+    } else if (strcmp(type_str, "tree") == 0) {
+        parsed_type = OBJ_TREE;
+    } else if (strcmp(type_str, "commit") == 0) {
+        parsed_type = OBJ_COMMIT;
+    } else {
+        free(file_buf);
+        return -1;
+    }
+
+    size_t header_len = (size_t)(nul - file_buf);
+    size_t payload_len = file_size - header_len - 1;
+    if (declared_len != payload_len) {
+        free(file_buf);
+        return -1;
+    }
+
+    void *out = malloc(payload_len > 0 ? payload_len : 1);
+    if (out == NULL) {
+        free(file_buf);
+        return -1;
+    }
+
+    if (payload_len > 0) {
+        memcpy(out, nul + 1, payload_len);
+    }
+
+    *type_out = parsed_type;
+    *data_out = out;
+    *len_out = payload_len;
+
+    free(file_buf);
+    return 0;
 }
