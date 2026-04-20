@@ -235,3 +235,40 @@ Recovery is straightforward if the commit hash is known (for example from `pes l
 
 This converts the detached history into normal branch history and prevents those commits from becoming unreachable.
 
+**Q6.1:** Over time, the object store accumulates unreachable objects — blobs, trees, or commits that no branch points to (directly or transitively). Describe an algorithm to find and delete these objects. What data structure would you use to track "reachable" hashes efficiently? For a repository with 100,000 commits and 50 branches, estimate how many objects you'd need to visit.
+
+I would implement garbage collection as a standard mark-and-sweep pass over the object graph.
+
+Mark phase:
+
+1. Build root set from all branch heads in `.pes/refs/heads/*` (and include detached HEAD hash if HEAD stores a raw hash).
+2. Initialize a work queue (stack/queue) with those root commit hashes.
+3. Maintain a hash set `reachable` keyed by object hash (64-hex or binary 32-byte form).
+4. While queue is not empty:
+  - Pop one object hash.
+  - If already in `reachable`, continue.
+  - Add to `reachable`.
+  - Read object by hash.
+  - If object is commit: enqueue its tree hash and parent hash (if present).
+  - If object is tree: parse entries and enqueue each child object hash (blob or subtree).
+  - If object is blob: no outgoing edges.
+
+Sweep phase:
+
+1. Enumerate all files under `.pes/objects/*/*`.
+2. Convert each object filename back to full hash.
+3. Delete object files whose hash is not in `reachable`.
+4. Optionally remove now-empty shard directories.
+
+Best data structure:
+
+1. Use a hash set for `reachable` membership checks with average O(1) insert/lookup.
+2. Use a deque/vector for traversal queue.
+
+Complexity estimate for 100,000 commits and 50 branches:
+
+1. Commit objects visited: up to about 100,000 in total (not 5,000,000), because histories overlap heavily and visited-set deduplicates traversal.
+2. Tree and blob visits depend on repository size/churn. Total visited objects equals unique reachable objects:
+  - approximately commits + unique trees + unique blobs.
+3. In a typical code repository, this is often on the order of a few hundred thousand to a few million objects, and each object is processed at most once.
+
